@@ -76,7 +76,7 @@ jobs:
   build-android:
     needs: read-config
     if: needs.read-config.outputs.build-android == 'true'
-    uses: ./.github/workflows/android/build-android.yml
+    uses: ./.github/workflows/build-android.yml
     with:
       config: ${{ needs.read-config.outputs.config }}
       build-type: ${{ needs.read-config.outputs.build-type }}
@@ -86,7 +86,7 @@ jobs:
   build-ios:
     needs: [read-config, build-android]
     if: needs.read-config.outputs.build-ios == 'true' && (needs.read-config.outputs.sequential != 'true' || always())
-    uses: ./.github/workflows/ios/build-ios.yml
+    uses: ./.github/workflows/build-ios.yml
     with:
       config: ${{ needs.read-config.outputs.config }}
       build-type: ${{ needs.read-config.outputs.build-type }}
@@ -144,7 +144,15 @@ jobs:
         if: needs.build-android.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          pattern: android-*-${{ needs.read-config.outputs.build-type }}-${{ needs.read-config.outputs.branch-name }}
+          pattern: "*_*_${{ needs.read-config.outputs.build-type }}_*.apk"
+          path: ./artifacts/android/
+          merge-multiple: true
+
+      - name: Download Android AAB artifacts
+        if: needs.build-android.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*_*_${{ needs.read-config.outputs.build-type }}_*.aab"
           path: ./artifacts/android/
           merge-multiple: true
 
@@ -152,7 +160,7 @@ jobs:
         if: needs.build-ios.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          pattern: ios-*-${{ needs.read-config.outputs.build-type }}-${{ needs.read-config.outputs.branch-name }}
+          pattern: "*_*_${{ needs.read-config.outputs.build-type }}_*.ipa"
           path: ./artifacts/ios/
           merge-multiple: true
 
