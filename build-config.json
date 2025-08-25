@@ -53,7 +53,7 @@
       "release": false
     },
     "requireSigning": {
-      "release": false,
+      "release": true,
       "beta": false,
       "debug": false
     }

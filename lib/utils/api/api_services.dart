@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../../models/task.dart';
 import '../../models/task_status.dart';
+import '../../config/environment.dart';
 
 class ApiService {
-  static const String baseUrl = 'https://jsonplaceholder.typicode.com';
+  static String get baseUrl => Environment.baseUrl;
+  static String get apiKey => Environment.apiKey;
 
   Future<List<Task>> getTasks() async {
     try {
