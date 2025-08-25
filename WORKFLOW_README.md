@@ -184,9 +184,29 @@ You can also trigger builds manually:
 3. Click **Run workflow**
 4. Choose the branch and click **Run workflow**
 
-## 📦 Artifacts
+## 📦 Downloads & Releases
 
-Built files are available as GitHub artifacts:
+The workflow provides built files in **two ways**:
+
+### 🎯 GitHub Releases (Recommended)
+Built files are automatically published to the **Releases page** with detailed information:
+
+1. **Navigate** to your repository's **Releases** page
+2. **Find** the latest release (named with version and build number)
+3. **Download** the files directly:
+   - `app-release.apk`: Android APK file
+   - `app-release.aab`: Android App Bundle
+   - `*.ipa`: iOS application file
+
+**Release Features:**
+- ✅ Automatic versioning from `pubspec.yaml`
+- ✅ Detailed release notes with build info
+- ✅ Build status and configuration details
+- ✅ Direct download links
+- ✅ Permanent storage (no expiration)
+
+### 📁 GitHub Artifacts (Backup)
+Built files are also available as GitHub artifacts:
 
 1. **Navigate** to the completed workflow run
 2. **Scroll down** to the "Artifacts" section

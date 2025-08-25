@@ -58,8 +58,29 @@ jobs:
       - name: Run tests
         run: flutter test
 
-      - name: Build APK
+      - name: Setup Android Signing (Optional)
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        run: |
+          echo "Setting up Android signing..."
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/keystore.jks
+          echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> android/key.properties
+          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> android/key.properties
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> android/key.properties
+          echo "storeFile=keystore.jks" >> android/key.properties
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
+      - name: Build APK (Signed)
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
         run: flutter build apk --release
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
+      - name: Build APK (Unsigned)
+        if: env.ANDROID_KEYSTORE_BASE64 == ''
+        run: flutter build apk --release
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -68,8 +89,17 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
 
-      - name: Build App Bundle (AAB)
+      - name: Build App Bundle (Signed)
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
         run: flutter build appbundle --release
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
+      - name: Build App Bundle (Unsigned)
+        if: env.ANDROID_KEYSTORE_BASE64 == ''
+        run: flutter build appbundle --release
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
@@ -103,27 +133,80 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Build iOS (No Codesign)
+      - name: Setup iOS Signing (Optional)
+        if: env.IOS_CERTIFICATE_BASE64 != ''
         run: |
-          flutter build ios --release --no-codesign
+          echo "Setting up iOS signing..."
+          # Create keychain
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          
+          # Import certificate
+          echo "${{ secrets.IOS_CERTIFICATE_BASE64 }}" | base64 -d > certificate.p12
+          security import certificate.p12 -k build.keychain -P "${{ secrets.IOS_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+          
+          # Import provisioning profile
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+
+      - name: Build iOS (Signed)
+        if: env.IOS_CERTIFICATE_BASE64 != ''
+        run: flutter build ios --release
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+
+      - name: Build iOS (Unsigned)
+        if: env.IOS_CERTIFICATE_BASE64 == ''
+        run: flutter build ios --release --no-codesign
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
 
       - name: Create IPA (Archive)
         run: |
           cd ios
-          xcodebuild -workspace Runner.xcworkspace \
-            -scheme Runner \
-            -configuration Release \
-            -destination generic/platform=iOS \
-            -archivePath build/Runner.xcarchive \
-            archive
+          if [ "${{ env.IOS_CERTIFICATE_BASE64 }}" != "" ]; then
+            # Signed build
+            xcodebuild -workspace Runner.xcworkspace \
+              -scheme Runner \
+              -configuration Release \
+              -destination generic/platform=iOS \
+              -archivePath build/Runner.xcarchive \
+              archive
+          else
+            # Unsigned build
+            xcodebuild -workspace Runner.xcworkspace \
+              -scheme Runner \
+              -configuration Release \
+              -destination generic/platform=iOS \
+              -archivePath build/Runner.xcarchive \
+              archive CODE_SIGNING_ALLOWED=NO
+          fi
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
 
       - name: Export IPA
         run: |
           cd ios
-          xcodebuild -exportArchive \
-            -archivePath build/Runner.xcarchive \
-            -exportPath build/ \
-            -exportOptionsPlist Runner/ExportOptions.plist
+          if [ "${{ env.IOS_CERTIFICATE_BASE64 }}" != "" ]; then
+            # Use custom export options for signed builds
+            xcodebuild -exportArchive \
+              -archivePath build/Runner.xcarchive \
+              -exportPath build/ \
+              -exportOptionsPlist Runner/ExportOptions.plist
+          else
+            # Use development export for unsigned builds
+            xcodebuild -exportArchive \
+              -archivePath build/Runner.xcarchive \
+              -exportPath build/ \
+              -exportOptionsPlist Runner/ExportOptions.plist
+          fi
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
 
       - name: Upload iOS artifact
         uses: actions/upload-artifact@v4
@@ -132,8 +215,118 @@ jobs:
           path: ios/build/*.ipa
           retention-days: 30
 
-  notify-completion:
+  create-release:
     needs: [read-config, build-android, build-ios]
+    if: always() && (needs.build-android.result == 'success' || needs.build-ios.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version from pubspec.yaml
+        id: version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | cut -d ' ' -f 2 | cut -d '+' -f 1)
+          BUILD_NUMBER=$(grep '^version:' pubspec.yaml | cut -d '+' -f 2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION-build$BUILD_NUMBER" >> $GITHUB_OUTPUT
+
+      - name: Download Android artifacts
+        if: needs.build-android.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: ./artifacts/android/
+
+      - name: Download Android AAB artifacts
+        if: needs.build-android.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: android-aab
+          path: ./artifacts/android/
+
+      - name: Download iOS artifacts
+        if: needs.build-ios.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-app
+          path: ./artifacts/ios/
+
+      - name: Create Release Notes
+        id: release_notes
+        run: |
+          cat > release_notes.md << EOF
+          # 📱 Task Management System v${{ steps.version.outputs.version }}
+          
+          **Build Number:** ${{ steps.version.outputs.build_number }}  
+          **Commit:** ${{ github.sha }}  
+          **Branch:** ${{ github.ref_name }}  
+          **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          
+          ## 📦 Available Downloads
+          
+          EOF
+          
+          if [ "${{ needs.build-android.result }}" == "success" ]; then
+            echo "### 🤖 Android" >> release_notes.md
+            echo "- **APK**: Direct installation file for Android devices" >> release_notes.md
+            echo "- **AAB**: Android App Bundle for Google Play Store" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+          
+          if [ "${{ needs.build-ios.result }}" == "success" ]; then
+            echo "### 🍎 iOS" >> release_notes.md
+            echo "- **IPA**: iOS application archive for distribution" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+          
+          echo "## 🔧 Build Configuration" >> release_notes.md
+          echo "- **Flutter Version**: 3.24.3" >> release_notes.md
+          echo "- **Build Type**: Release" >> release_notes.md
+          echo "- **Android Enabled**: ${{ needs.read-config.outputs.build-android }}" >> release_notes.md
+          echo "- **iOS Enabled**: ${{ needs.read-config.outputs.build-ios }}" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## 📋 Build Status" >> release_notes.md
+          echo "| Platform | Status |" >> release_notes.md
+          echo "|----------|--------|" >> release_notes.md
+          
+          if [ "${{ needs.read-config.outputs.build-android }}" == "true" ]; then
+            if [ "${{ needs.build-android.result }}" == "success" ]; then
+              echo "| Android | ✅ Success |" >> release_notes.md
+            else
+              echo "| Android | ❌ Failed |" >> release_notes.md
+            fi
+          else
+            echo "| Android | ⏭️ Skipped |" >> release_notes.md
+          fi
+          
+          if [ "${{ needs.read-config.outputs.build-ios }}" == "true" ]; then
+            if [ "${{ needs.build-ios.result }}" == "success" ]; then
+              echo "| iOS | ✅ Success |" >> release_notes.md
+            else
+              echo "| iOS | ❌ Failed |" >> release_notes.md
+            fi
+          else
+            echo "| iOS | ⏭️ Skipped |" >> release_notes.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Task Management System v${{ steps.version.outputs.version }} (Build ${{ steps.version.outputs.build_number }})"
+          body_path: release_notes.md
+          files: |
+            artifacts/android/*
+            artifacts/ios/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify-completion:
+    needs: [read-config, build-android, build-ios, create-release]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -161,4 +354,10 @@ jobs:
             fi
           else
             echo "| iOS | ⏭️ Skipped | No |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.create-release.result }}" == "success" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "🎉 **GitHub Release Created Successfully!**" >> $GITHUB_STEP_SUMMARY
+            echo "Check the [Releases page](https://github.com/${{ github.repository }}/releases) to download the built apps." >> $GITHUB_STEP_SUMMARY
           fi
