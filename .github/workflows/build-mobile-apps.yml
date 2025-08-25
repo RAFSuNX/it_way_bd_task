@@ -49,7 +49,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.3'
+          flutter-version: '3.35.1'
           channel: 'stable'
 
       - name: Get dependencies
@@ -119,7 +119,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.3'
+          flutter-version: '3.35.1'
           channel: 'stable'
 
       - name: Get dependencies
@@ -282,7 +282,7 @@ jobs:
           fi
           
           echo "## 🔧 Build Configuration" >> release_notes.md
-          echo "- **Flutter Version**: 3.24.3" >> release_notes.md
+          echo "- **Flutter Version**: 3.35.1" >> release_notes.md
           echo "- **Build Type**: Release" >> release_notes.md
           echo "- **Android Enabled**: ${{ needs.read-config.outputs.build-android }}" >> release_notes.md
           echo "- **iOS Enabled**: ${{ needs.read-config.outputs.build-ios }}" >> release_notes.md
