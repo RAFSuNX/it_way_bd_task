@@ -4,7 +4,7 @@
     "extractFromPubspec": true
   },
   "android": {
-    "enabled": false,
+    "enabled": true,
     "outputFormat": ["apk", "aab"]
   },
   "ios": {
