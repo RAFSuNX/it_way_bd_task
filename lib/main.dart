@@ -33,7 +33,7 @@ class TaskManagementSystem extends StatelessWidget {
       builder: (context, themeProvider, _) {
         return MaterialApp(
           debugShowCheckedModeBanner: false,
-          title: 'Task Manager v2.0',
+          title: 'Task Manager v3.0',
           themeMode: themeProvider.themeMode,
           theme: ThemeData(
             colorScheme: ThemeColor.lightColorScheme,
