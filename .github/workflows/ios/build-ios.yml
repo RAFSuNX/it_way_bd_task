@@ -1,0 +1,155 @@
+name: Build iOS
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        required: true
+        type: string
+        description: 'Build configuration JSON'
+      build-type:
+        required: true
+        type: string
+        description: 'Build type (release/debug/beta)'
+      branch-name:
+        required: true
+        type: string
+        description: 'Branch name'
+    outputs:
+      ipa-path:
+        description: 'Path to built IPA'
+        value: ${{ jobs.build-ios.outputs.ipa-path }}
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    outputs:
+      ipa-path: ${{ steps.build-info.outputs.ipa-path }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Parse configuration
+        id: config
+        run: |
+          CONFIG='${{ inputs.config }}'
+          echo "flutter-version=$(echo $CONFIG | jq -r '.flutter.version')" >> $GITHUB_OUTPUT
+          echo "flutter-channel=$(echo $CONFIG | jq -r '.flutter.channel')" >> $GITHUB_OUTPUT
+          echo "xcode-version=$(echo $CONFIG | jq -r '.xcode.version')" >> $GITHUB_OUTPUT
+          echo "run-tests=$(echo $CONFIG | jq -r '.testing.runTests')" >> $GITHUB_OUTPUT
+          echo "retention-days=$(echo $CONFIG | jq -r '.workflow.artifactRetentionDays')" >> $GITHUB_OUTPUT
+          echo "codesign=$(echo $CONFIG | jq -r '.ios.codesign')" >> $GITHUB_OUTPUT
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.config.outputs.flutter-version }}
+          channel: ${{ steps.config.outputs.flutter-channel }}
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        if: steps.config.outputs.run-tests == 'true'
+        run: flutter test
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ steps.config.outputs.xcode-version }}
+
+      - name: Setup iOS Signing (Optional)
+        if: env.IOS_CERTIFICATE_BASE64 != '' && steps.config.outputs.codesign == 'true'
+        run: |
+          echo "Setting up iOS signing..."
+          # Create keychain
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          
+          # Import certificate
+          echo "${{ secrets.IOS_CERTIFICATE_BASE64 }}" | base64 -d > certificate.p12
+          security import certificate.p12 -k build.keychain -P "${{ secrets.IOS_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+          
+          # Import provisioning profile
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+
+      - name: Build iOS
+        run: |
+          if [ "${{ inputs.build-type }}" == "debug" ]; then
+            flutter build ios --debug --no-codesign
+          elif [ "${{ env.IOS_CERTIFICATE_BASE64 }}" != "" ] && [ "${{ steps.config.outputs.codesign }}" == "true" ]; then
+            flutter build ios --release
+          else
+            flutter build ios --release --no-codesign
+          fi
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+
+      - name: Create IPA (Archive)
+        run: |
+          cd ios
+          SCHEME_NAME="Runner"
+          CONFIGURATION="Release"
+          
+          if [ "${{ inputs.build-type }}" == "debug" ]; then
+            CONFIGURATION="Debug"
+          fi
+          
+          if [ "${{ env.IOS_CERTIFICATE_BASE64 }}" != "" ] && [ "${{ steps.config.outputs.codesign }}" == "true" ]; then
+            # Signed build
+            xcodebuild -workspace Runner.xcworkspace \
+              -scheme $SCHEME_NAME \
+              -configuration $CONFIGURATION \
+              -destination generic/platform=iOS \
+              -archivePath build/Runner.xcarchive \
+              archive
+          else
+            # Unsigned build
+            xcodebuild -workspace Runner.xcworkspace \
+              -scheme $SCHEME_NAME \
+              -configuration $CONFIGURATION \
+              -destination generic/platform=iOS \
+              -archivePath build/Runner.xcarchive \
+              archive CODE_SIGNING_ALLOWED=NO
+          fi
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+
+      - name: Export IPA
+        run: |
+          cd ios
+          if [ "${{ env.IOS_CERTIFICATE_BASE64 }}" != "" ] && [ "${{ steps.config.outputs.codesign }}" == "true" ]; then
+            # Use custom export options for signed builds
+            xcodebuild -exportArchive \
+              -archivePath build/Runner.xcarchive \
+              -exportPath build/ \
+              -exportOptionsPlist Runner/ExportOptions.plist
+          else
+            # Use debugging export for unsigned builds with automatic signing
+            xcodebuild -exportArchive \
+              -archivePath build/Runner.xcarchive \
+              -exportPath build/ \
+              -exportOptionsPlist Runner/ExportOptions.plist \
+              -allowProvisioningUpdates \
+              -allowProvisioningDeviceRegistration
+          fi
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+
+      - name: Set build info
+        id: build-info
+        run: |
+          echo "ipa-path=ios/build/*.ipa" >> $GITHUB_OUTPUT
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa-${{ inputs.build-type }}-${{ inputs.branch-name }}
+          path: ios/build/*.ipa
+          retention-days: ${{ steps.config.outputs.retention-days }}

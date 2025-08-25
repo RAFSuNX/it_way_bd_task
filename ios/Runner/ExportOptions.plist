@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>method</key>
-    <string>development</string>
+    <string>debugging</string>
     <key>compileBitcode</key>
     <false/>
     <key>uploadBitcode</key>
@@ -11,15 +11,13 @@
     <key>uploadSymbols</key>
     <false/>
     <key>signingStyle</key>
-    <string>manual</string>
+    <string>automatic</string>
     <key>stripSwiftSymbols</key>
     <true/>
     <key>thinning</key>
     <string>&lt;none&gt;</string>
     <key>destination</key>
     <string>export</string>
-    <key>signingCertificate</key>
-    <string>-</string>
     <key>provisioningProfiles</key>
     <dict>
     </dict>
