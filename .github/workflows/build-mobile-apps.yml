@@ -2,7 +2,7 @@ name: Build Mobile Apps
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, release/*, beta/*, debug ]
   pull_request:
     branches: [ main ]
 
@@ -10,256 +10,88 @@ jobs:
   read-config:
     runs-on: ubuntu-latest
     outputs:
+      config: ${{ steps.config.outputs.config }}
+      build-type: ${{ steps.config.outputs.build-type }}
       build-android: ${{ steps.config.outputs.build-android }}
       build-ios: ${{ steps.config.outputs.build-ios }}
-      flutter-version: ${{ steps.config.outputs.flutter-version }}
-      flutter-channel: ${{ steps.config.outputs.flutter-channel }}
-      java-version: ${{ steps.config.outputs.java-version }}
-      java-distribution: ${{ steps.config.outputs.java-distribution }}
-      xcode-version: ${{ steps.config.outputs.xcode-version }}
-      run-tests: ${{ steps.config.outputs.run-tests }}
-      retention-days: ${{ steps.config.outputs.retention-days }}
       sequential: ${{ steps.config.outputs.sequential }}
+      branch-name: ${{ steps.config.outputs.branch-name }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Read build configuration
+      - name: Read and process configuration
         id: config
         run: |
+          # Read configuration file
           if [ -f "build-config.json" ]; then
-            BUILD_ANDROID=$(jq -r '.android.enabled' build-config.json)
-            BUILD_IOS=$(jq -r '.ios.enabled' build-config.json)
-            FLUTTER_VERSION=$(jq -r '.flutter.version' build-config.json)
-            FLUTTER_CHANNEL=$(jq -r '.flutter.channel' build-config.json)
-            JAVA_VERSION=$(jq -r '.java.version' build-config.json)
-            JAVA_DISTRIBUTION=$(jq -r '.java.distribution' build-config.json)
-            XCODE_VERSION=$(jq -r '.xcode.version' build-config.json)
-            RUN_TESTS=$(jq -r '.testing.runTests' build-config.json)
-            RETENTION_DAYS=$(jq -r '.workflow.artifactRetentionDays' build-config.json)
-            SEQUENTIAL=$(jq -r '.workflow.sequential' build-config.json)
+            CONFIG=$(cat build-config.json)
           else
             echo "build-config.json not found, using default values"
-            BUILD_ANDROID="true"
-            BUILD_IOS="true"
-            FLUTTER_VERSION="3.35.1"
-            FLUTTER_CHANNEL="stable"
-            JAVA_VERSION="17"
-            JAVA_DISTRIBUTION="zulu"
-            XCODE_VERSION="latest-stable"
-            RUN_TESTS="false"
-            RETENTION_DAYS="30"
-            SEQUENTIAL="true"
+            CONFIG='{
+              "android": {"enabled": true, "outputFormat": ["apk", "aab"]},
+              "ios": {"enabled": true, "codesign": false},
+              "flutter": {"version": "3.35.1", "channel": "stable"},
+              "java": {"version": "17", "distribution": "zulu"},
+              "xcode": {"version": "latest-stable"},
+              "testing": {"runTests": false, "testTimeout": "10m"},
+              "workflow": {"sequential": true, "artifactRetentionDays": 30},
+              "branchMapping": {"default": "debug"}
+            }'
           fi
+          
+          # Get branch name and determine build type
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          echo "branch-name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          
+          # Determine build type based on branch mapping
+          BUILD_TYPE=$(echo $CONFIG | jq -r --arg branch "$BRANCH_NAME" '
+            .branchMapping as $mapping |
+            if $mapping[$branch] then $mapping[$branch]
+            elif ($mapping | to_entries[] | select(.key | test("\\*$")) | select($branch | startswith(.key | rtrimstr("*")))) then
+              ($mapping | to_entries[] | select(.key | test("\\*$")) | select($branch | startswith(.key | rtrimstr("*"))) | .value)
+            else $mapping.default // "debug"
+            end
+          ')
+          
+          echo "build-type=$BUILD_TYPE" >> $GITHUB_OUTPUT
+          
+          # Extract other configuration values
+          BUILD_ANDROID=$(echo $CONFIG | jq -r '.android.enabled')
+          BUILD_IOS=$(echo $CONFIG | jq -r '.ios.enabled')
+          SEQUENTIAL=$(echo $CONFIG | jq -r '.workflow.sequential')
           
           echo "build-android=$BUILD_ANDROID" >> $GITHUB_OUTPUT
           echo "build-ios=$BUILD_IOS" >> $GITHUB_OUTPUT
-          echo "flutter-version=$FLUTTER_VERSION" >> $GITHUB_OUTPUT
-          echo "flutter-channel=$FLUTTER_CHANNEL" >> $GITHUB_OUTPUT
-          echo "java-version=$JAVA_VERSION" >> $GITHUB_OUTPUT
-          echo "java-distribution=$JAVA_DISTRIBUTION" >> $GITHUB_OUTPUT
-          echo "xcode-version=$XCODE_VERSION" >> $GITHUB_OUTPUT
-          echo "run-tests=$RUN_TESTS" >> $GITHUB_OUTPUT
-          echo "retention-days=$RETENTION_DAYS" >> $GITHUB_OUTPUT
           echo "sequential=$SEQUENTIAL" >> $GITHUB_OUTPUT
+          echo "config=$CONFIG" >> $GITHUB_OUTPUT
           
           echo "=== Build Configuration ==="
+          echo "Branch: $BRANCH_NAME"
+          echo "Build Type: $BUILD_TYPE"
           echo "Android build enabled: $BUILD_ANDROID"
           echo "iOS build enabled: $BUILD_IOS"
-          echo "Flutter version: $FLUTTER_VERSION"
-          echo "Flutter channel: $FLUTTER_CHANNEL"
-          echo "Java version: $JAVA_VERSION"
-          echo "Java distribution: $JAVA_DISTRIBUTION"
-          echo "Xcode version: $XCODE_VERSION"
-          echo "Run tests: $RUN_TESTS"
-          echo "Retention days: $RETENTION_DAYS"
           echo "Sequential builds: $SEQUENTIAL"
 
   build-android:
     needs: read-config
     if: needs.read-config.outputs.build-android == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: ${{ needs.read-config.outputs.java-distribution }}
-          java-version: ${{ needs.read-config.outputs.java-version }}
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ needs.read-config.outputs.flutter-version }}
-          channel: ${{ needs.read-config.outputs.flutter-channel }}
-
-      - name: Get dependencies
-        run: flutter pub get
-
-      - name: Run tests
-        if: needs.read-config.outputs.run-tests == 'true'
-        run: flutter test
-
-      - name: Setup Android Signing (Optional)
-        if: env.ANDROID_KEYSTORE_BASE64 != ''
-        run: |
-          echo "Setting up Android signing..."
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/keystore.jks
-          echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> android/key.properties
-          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> android/key.properties
-          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> android/key.properties
-          echo "storeFile=keystore.jks" >> android/key.properties
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-
-      - name: Build APK (Signed)
-        if: env.ANDROID_KEYSTORE_BASE64 != ''
-        run: flutter build apk --release
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-
-      - name: Build APK (Unsigned)
-        if: env.ANDROID_KEYSTORE_BASE64 == ''
-        run: flutter build apk --release
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
-          retention-days: ${{ needs.read-config.outputs.retention-days }}
-
-      - name: Build App Bundle (Signed)
-        if: env.ANDROID_KEYSTORE_BASE64 != ''
-        run: flutter build appbundle --release
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-
-      - name: Build App Bundle (Unsigned)
-        if: env.ANDROID_KEYSTORE_BASE64 == ''
-        run: flutter build appbundle --release
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-
-      - name: Upload AAB artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-aab
-          path: build/app/outputs/bundle/release/app-release.aab
-          retention-days: ${{ needs.read-config.outputs.retention-days }}
+    uses: ./.github/workflows/android/build-android.yml
+    with:
+      config: ${{ needs.read-config.outputs.config }}
+      build-type: ${{ needs.read-config.outputs.build-type }}
+      branch-name: ${{ needs.read-config.outputs.branch-name }}
+    secrets: inherit
 
   build-ios:
     needs: [read-config, build-android]
     if: needs.read-config.outputs.build-ios == 'true' && (needs.read-config.outputs.sequential != 'true' || always())
-    runs-on: macos-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ needs.read-config.outputs.flutter-version }}
-          channel: ${{ needs.read-config.outputs.flutter-channel }}
-
-      - name: Get dependencies
-        run: flutter pub get
-
-      - name: Run tests
-        if: needs.read-config.outputs.run-tests == 'true'
-        run: flutter test
-
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: ${{ needs.read-config.outputs.xcode-version }}
-
-      - name: Setup iOS Signing (Optional)
-        if: env.IOS_CERTIFICATE_BASE64 != ''
-        run: |
-          echo "Setting up iOS signing..."
-          # Create keychain
-          security create-keychain -p "" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          security set-keychain-settings -t 3600 -u build.keychain
-          
-          # Import certificate
-          echo "${{ secrets.IOS_CERTIFICATE_BASE64 }}" | base64 -d > certificate.p12
-          security import certificate.p12 -k build.keychain -P "${{ secrets.IOS_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
-          
-          # Import provisioning profile
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
-        env:
-          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-
-      - name: Build iOS (Signed)
-        if: env.IOS_CERTIFICATE_BASE64 != ''
-        run: flutter build ios --release
-        env:
-          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-
-      - name: Build iOS (Unsigned)
-        if: env.IOS_CERTIFICATE_BASE64 == ''
-        run: flutter build ios --release --no-codesign
-        env:
-          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-
-      - name: Create IPA (Archive)
-        run: |
-          cd ios
-          if [ "${{ env.IOS_CERTIFICATE_BASE64 }}" != "" ]; then
-            # Signed build
-            xcodebuild -workspace Runner.xcworkspace \
-              -scheme Runner \
-              -configuration Release \
-              -destination generic/platform=iOS \
-              -archivePath build/Runner.xcarchive \
-              archive
-          else
-            # Unsigned build
-            xcodebuild -workspace Runner.xcworkspace \
-              -scheme Runner \
-              -configuration Release \
-              -destination generic/platform=iOS \
-              -archivePath build/Runner.xcarchive \
-              archive CODE_SIGNING_ALLOWED=NO
-          fi
-        env:
-          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-
-      - name: Export IPA
-        run: |
-          cd ios
-          if [ "${{ env.IOS_CERTIFICATE_BASE64 }}" != "" ]; then
-            # Use custom export options for signed builds
-            xcodebuild -exportArchive \
-              -archivePath build/Runner.xcarchive \
-              -exportPath build/ \
-              -exportOptionsPlist Runner/ExportOptions.plist
-          else
-            # Use development export for unsigned builds with manual signing
-            xcodebuild -exportArchive \
-              -archivePath build/Runner.xcarchive \
-              -exportPath build/ \
-              -exportOptionsPlist Runner/ExportOptions.plist \
-              -allowProvisioningUpdates
-          fi
-        env:
-          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-
-      - name: Upload iOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-app
-          path: ios/build/*.ipa
-          retention-days: ${{ needs.read-config.outputs.retention-days }}
+    uses: ./.github/workflows/ios/build-ios.yml
+    with:
+      config: ${{ needs.read-config.outputs.config }}
+      build-type: ${{ needs.read-config.outputs.build-type }}
+      branch-name: ${{ needs.read-config.outputs.branch-name }}
+    secrets: inherit
 
   create-release:
     needs: [read-config, build-android, build-ios]
@@ -269,45 +101,74 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Parse release configuration
+        id: release-config
+        run: |
+          CONFIG='${{ needs.read-config.outputs.config }}'
+          CREATE_RELEASE=$(echo $CONFIG | jq -r '.releaseConfig.createRelease // true')
+          RELEASE_NAME_TEMPLATE=$(echo $CONFIG | jq -r '.releaseConfig.releaseName // "Task Management System v{version} ({buildType})"')
+          TAG_FORMAT=$(echo $CONFIG | jq -r '.releaseConfig.tagFormat // "v{version}-{buildType}-{buildNumber}"')
+          
+          BUILD_TYPE='${{ needs.read-config.outputs.build-type }}'
+          IS_PRERELEASE=$(echo $CONFIG | jq -r --arg buildType "$BUILD_TYPE" '.releaseConfig.includePrerelease[$buildType] // true')
+          
+          echo "create-release=$CREATE_RELEASE" >> $GITHUB_OUTPUT
+          echo "release-name-template=$RELEASE_NAME_TEMPLATE" >> $GITHUB_OUTPUT
+          echo "tag-format=$TAG_FORMAT" >> $GITHUB_OUTPUT
+          echo "is-prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+
       - name: Get version from pubspec.yaml
         id: version
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | cut -d ' ' -f 2 | cut -d '+' -f 1)
           BUILD_NUMBER=$(grep '^version:' pubspec.yaml | cut -d '+' -f 2)
+          BUILD_TYPE='${{ needs.read-config.outputs.build-type }}'
+          
+          # Replace placeholders in release name and tag
+          RELEASE_NAME='${{ steps.release-config.outputs.release-name-template }}'
+          RELEASE_NAME=${RELEASE_NAME//\{version\}/$VERSION}
+          RELEASE_NAME=${RELEASE_NAME//\{buildType\}/$BUILD_TYPE}
+          RELEASE_NAME=${RELEASE_NAME//\{buildNumber\}/$BUILD_NUMBER}
+          
+          TAG_NAME='${{ steps.release-config.outputs.tag-format }}'
+          TAG_NAME=${TAG_NAME//\{version\}/$VERSION}
+          TAG_NAME=${TAG_NAME//\{buildType\}/$BUILD_TYPE}
+          TAG_NAME=${TAG_NAME//\{buildNumber\}/$BUILD_NUMBER}
+          
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
-          echo "tag=v$VERSION-build$BUILD_NUMBER" >> $GITHUB_OUTPUT
+          echo "release_name=$RELEASE_NAME" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
       - name: Download Android artifacts
         if: needs.build-android.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: android-apk
+          pattern: android-*-${{ needs.read-config.outputs.build-type }}-${{ needs.read-config.outputs.branch-name }}
           path: ./artifacts/android/
-
-      - name: Download Android AAB artifacts
-        if: needs.build-android.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          name: android-aab
-          path: ./artifacts/android/
+          merge-multiple: true
 
       - name: Download iOS artifacts
         if: needs.build-ios.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: ios-app
+          pattern: ios-*-${{ needs.read-config.outputs.build-type }}-${{ needs.read-config.outputs.branch-name }}
           path: ./artifacts/ios/
+          merge-multiple: true
 
       - name: Create Release Notes
         id: release_notes
         run: |
-          cat > release_notes.md << EOF
-          # 📱 Task Management System v${{ steps.version.outputs.version }}
+          BUILD_TYPE='${{ needs.read-config.outputs.build-type }}'
+          BRANCH_NAME='${{ needs.read-config.outputs.branch-name }}'
           
+          cat > release_notes.md << EOF
+          # 📱 ${{ steps.version.outputs.release_name }}
+          
+          **Build Type:** $BUILD_TYPE  
+          **Branch:** $BRANCH_NAME  
           **Build Number:** ${{ steps.version.outputs.build_number }}  
           **Commit:** ${{ github.sha }}  
-          **Branch:** ${{ github.ref_name }}  
           **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
           
           ## 📦 Available Downloads
@@ -328,8 +189,9 @@ jobs:
           fi
           
           echo "## 🔧 Build Configuration" >> release_notes.md
-          echo "- **Flutter Version**: 3.35.1" >> release_notes.md
-          echo "- **Build Type**: Release" >> release_notes.md
+          echo "- **Flutter Version**: $(echo '${{ needs.read-config.outputs.config }}' | jq -r '.flutter.version')" >> release_notes.md
+          echo "- **Build Type**: $BUILD_TYPE" >> release_notes.md
+          echo "- **Branch**: $BRANCH_NAME" >> release_notes.md
           echo "- **Android Enabled**: ${{ needs.read-config.outputs.build-android }}" >> release_notes.md
           echo "- **iOS Enabled**: ${{ needs.read-config.outputs.build-ios }}" >> release_notes.md
           echo "" >> release_notes.md
@@ -358,16 +220,17 @@ jobs:
           fi
 
       - name: Create GitHub Release
+        if: steps.release-config.outputs.create-release == 'true'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: "Task Management System v${{ steps.version.outputs.version }} (Build ${{ steps.version.outputs.build_number }})"
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: ${{ steps.version.outputs.release_name }}
           body_path: release_notes.md
           files: |
             artifacts/android/*
             artifacts/ios/*
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.release-config.outputs.is-prerelease }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -379,6 +242,9 @@ jobs:
       - name: Build Summary
         run: |
           echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ needs.read-config.outputs.branch-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Type:** ${{ needs.read-config.outputs.build-type }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Platform | Status | Enabled |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|--------|---------|" >> $GITHUB_STEP_SUMMARY
           

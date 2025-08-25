@@ -1,0 +1,164 @@
+name: Build Android
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        required: true
+        type: string
+        description: 'Build configuration JSON'
+      build-type:
+        required: true
+        type: string
+        description: 'Build type (release/debug/beta)'
+      branch-name:
+        required: true
+        type: string
+        description: 'Branch name'
+    outputs:
+      apk-path:
+        description: 'Path to built APK'
+        value: ${{ jobs.build-android.outputs.apk-path }}
+      aab-path:
+        description: 'Path to built AAB'
+        value: ${{ jobs.build-android.outputs.aab-path }}
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    outputs:
+      apk-path: ${{ steps.build-info.outputs.apk-path }}
+      aab-path: ${{ steps.build-info.outputs.aab-path }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Parse configuration
+        id: config
+        run: |
+          CONFIG='${{ inputs.config }}'
+          echo "flutter-version=$(echo $CONFIG | jq -r '.flutter.version')" >> $GITHUB_OUTPUT
+          echo "flutter-channel=$(echo $CONFIG | jq -r '.flutter.channel')" >> $GITHUB_OUTPUT
+          echo "java-version=$(echo $CONFIG | jq -r '.java.version')" >> $GITHUB_OUTPUT
+          echo "java-distribution=$(echo $CONFIG | jq -r '.java.distribution')" >> $GITHUB_OUTPUT
+          echo "run-tests=$(echo $CONFIG | jq -r '.testing.runTests')" >> $GITHUB_OUTPUT
+          echo "retention-days=$(echo $CONFIG | jq -r '.workflow.artifactRetentionDays')" >> $GITHUB_OUTPUT
+          echo "output-formats=$(echo $CONFIG | jq -r '.android.outputFormat | join(",")')" >> $GITHUB_OUTPUT
+          echo "app-name=$(echo $CONFIG | jq -r '.app.name')" >> $GITHUB_OUTPUT
+          echo "extract-from-pubspec=$(echo $CONFIG | jq -r '.app.extractFromPubspec')" >> $GITHUB_OUTPUT
+
+      - name: Extract app info
+        id: app-info
+        run: |
+          # Extract app name
+          if [ "${{ steps.config.outputs.extract-from-pubspec }}" == "true" ]; then
+            APP_NAME=$(grep '^name:' pubspec.yaml | sed 's/name: *//' | tr -d '"' | tr -d "'")
+          else
+            APP_NAME="${{ steps.config.outputs.app-name }}"
+          fi
+          
+          # Extract version
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: *//' | cut -d'+' -f1 | tr -d '"' | tr -d "'")
+          
+          # Generate build date
+          BUILD_DATE=$(date +'%Y%m%d')
+          
+          echo "app-name=$APP_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build-date=$BUILD_DATE" >> $GITHUB_OUTPUT
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: ${{ steps.config.outputs.java-distribution }}
+          java-version: ${{ steps.config.outputs.java-version }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.config.outputs.flutter-version }}
+          channel: ${{ steps.config.outputs.flutter-channel }}
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        if: steps.config.outputs.run-tests == 'true'
+        run: flutter test
+
+      - name: Setup Android Signing (Optional)
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        run: |
+          echo "Setting up Android signing..."
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/keystore.jks
+          echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> android/key.properties
+          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> android/key.properties
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> android/key.properties
+          echo "storeFile=keystore.jks" >> android/key.properties
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
+      - name: Build APK
+        if: contains(steps.config.outputs.output-formats, 'apk')
+        run: |
+          if [ "${{ inputs.build-type }}" == "debug" ]; then
+            flutter build apk --debug
+          else
+            flutter build apk --release
+          fi
+
+      - name: Build App Bundle (AAB)
+        if: contains(steps.config.outputs.output-formats, 'aab')
+        run: |
+          if [ "${{ inputs.build-type }}" == "debug" ]; then
+            flutter build appbundle --debug
+          else
+            flutter build appbundle --release
+          fi
+
+      - name: Rename and set build info
+        id: build-info
+        run: |
+          # Create proper file names
+          APK_NAME="${{ steps.app-info.outputs.app-name }}_${{ steps.app-info.outputs.version }}_${{ inputs.build-type }}_${{ steps.app-info.outputs.build-date }}.apk"
+          AAB_NAME="${{ steps.app-info.outputs.app-name }}_${{ steps.app-info.outputs.version }}_${{ inputs.build-type }}_${{ steps.app-info.outputs.build-date }}.aab"
+          
+          if [ "${{ inputs.build-type }}" == "debug" ]; then
+            ORIGINAL_APK="build/app/outputs/flutter-apk/app-debug.apk"
+            ORIGINAL_AAB="build/app/outputs/bundle/debug/app-debug.aab"
+          else
+            ORIGINAL_APK="build/app/outputs/flutter-apk/app-release.apk"
+            ORIGINAL_AAB="build/app/outputs/bundle/release/app-release.aab"
+          fi
+          
+          # Create renamed directory
+          mkdir -p build/renamed
+          
+          # Rename files if they exist
+          if [ -f "$ORIGINAL_APK" ]; then
+            cp "$ORIGINAL_APK" "build/renamed/$APK_NAME"
+            echo "apk-path=build/renamed/$APK_NAME" >> $GITHUB_OUTPUT
+            echo "apk-name=$APK_NAME" >> $GITHUB_OUTPUT
+          fi
+          
+          if [ -f "$ORIGINAL_AAB" ]; then
+            cp "$ORIGINAL_AAB" "build/renamed/$AAB_NAME"
+            echo "aab-path=build/renamed/$AAB_NAME" >> $GITHUB_OUTPUT
+            echo "aab-name=$AAB_NAME" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload APK artifact
+        if: contains(steps.config.outputs.output-formats, 'apk')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build-info.outputs.apk-name }}
+          path: ${{ steps.build-info.outputs.apk-path }}
+          retention-days: ${{ steps.config.outputs.retention-days }}
+
+      - name: Upload AAB artifact
+        if: contains(steps.config.outputs.output-formats, 'aab')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build-info.outputs.aab-name }}
+          path: ${{ steps.build-info.outputs.aab-path }}
+          retention-days: ${{ steps.config.outputs.retention-days }}

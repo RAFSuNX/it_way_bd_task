@@ -39,6 +39,28 @@ jobs:
           echo "run-tests=$(echo $CONFIG | jq -r '.testing.runTests')" >> $GITHUB_OUTPUT
           echo "retention-days=$(echo $CONFIG | jq -r '.workflow.artifactRetentionDays')" >> $GITHUB_OUTPUT
           echo "codesign=$(echo $CONFIG | jq -r '.ios.codesign')" >> $GITHUB_OUTPUT
+          echo "app-name=$(echo $CONFIG | jq -r '.app.name')" >> $GITHUB_OUTPUT
+          echo "extract-from-pubspec=$(echo $CONFIG | jq -r '.app.extractFromPubspec')" >> $GITHUB_OUTPUT
+
+      - name: Extract app info
+        id: app-info
+        run: |
+          # Extract app name
+          if [ "${{ steps.config.outputs.extract-from-pubspec }}" == "true" ]; then
+            APP_NAME=$(grep '^name:' pubspec.yaml | sed 's/name: *//' | tr -d '"' | tr -d "'")
+          else
+            APP_NAME="${{ steps.config.outputs.app-name }}"
+          fi
+          
+          # Extract version
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: *//' | cut -d'+' -f1 | tr -d '"' | tr -d "'")
+          
+          # Generate build date
+          BUILD_DATE=$(date +'%Y%m%d')
+          
+          echo "app-name=$APP_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build-date=$BUILD_DATE" >> $GITHUB_OUTPUT
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -142,14 +164,32 @@ jobs:
         env:
           IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
 
-      - name: Set build info
+      - name: Rename and set build info
         id: build-info
         run: |
-          echo "ipa-path=ios/build/*.ipa" >> $GITHUB_OUTPUT
+          # Create proper file name
+          IPA_NAME="${{ steps.app-info.outputs.app-name }}_${{ steps.app-info.outputs.version }}_${{ inputs.build-type }}_${{ steps.app-info.outputs.build-date }}.ipa"
+          
+          # Find the generated IPA file
+          ORIGINAL_IPA=$(find ios/build -name "*.ipa" -type f | head -n 1)
+          
+          if [ -n "$ORIGINAL_IPA" ] && [ -f "$ORIGINAL_IPA" ]; then
+            # Create renamed directory
+            mkdir -p ios/build/renamed
+            
+            # Copy with new name
+            cp "$ORIGINAL_IPA" "ios/build/renamed/$IPA_NAME"
+            
+            echo "ipa-path=ios/build/renamed/$IPA_NAME" >> $GITHUB_OUTPUT
+            echo "ipa-name=$IPA_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "No IPA file found"
+            exit 1
+          fi
 
       - name: Upload iOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-ipa-${{ inputs.build-type }}-${{ inputs.branch-name }}
-          path: ios/build/*.ipa
+          name: ${{ steps.build-info.outputs.ipa-name }}
+          path: ${{ steps.build-info.outputs.ipa-path }}
           retention-days: ${{ steps.config.outputs.retention-days }}

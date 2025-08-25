@@ -1,12 +1,14 @@
 {
+  "app": {
+    "name": "TaskManager",
+    "extractFromPubspec": true
+  },
   "android": {
     "enabled": true,
-    "buildType": "release",
     "outputFormat": ["apk", "aab"]
   },
   "ios": {
     "enabled": true,
-    "buildType": "release",
     "codesign": false
   },
   "flutter": {
@@ -27,5 +29,45 @@
   "workflow": {
     "sequential": true,
     "artifactRetentionDays": 30
+  },
+  "branchMapping": {
+    "main": "release",
+    "master": "release",
+    "release": "release",
+    "release/*": "release",
+    "develop": "debug",
+    "dev": "debug",
+    "debug": "debug",
+    "beta": "beta",
+    "beta/*": "beta",
+    "staging": "beta",
+    "default": "debug"
+  },
+  "releaseConfig": {
+    "createRelease": true,
+    "releaseName": "Task Management System v{version} ({buildType})",
+    "tagFormat": "v{version}-{buildType}-{buildNumber}",
+    "includePrerelease": {
+      "debug": true,
+      "beta": true,
+      "release": false
+    },
+    "requireSigning": {
+      "release": true,
+      "beta": false,
+      "debug": false
+    }
+  },
+  "signingRequirements": {
+    "android": {
+      "release": ["ANDROID_KEYSTORE_BASE64", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD"],
+      "beta": [],
+      "debug": []
+    },
+    "ios": {
+      "release": ["IOS_CERTIFICATE_BASE64", "IOS_CERTIFICATE_PASSWORD", "IOS_PROVISIONING_PROFILE_BASE64"],
+      "beta": [],
+      "debug": []
+    }
   }
 }
