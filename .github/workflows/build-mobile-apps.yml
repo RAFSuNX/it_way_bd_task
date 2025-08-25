@@ -115,6 +115,9 @@ jobs:
           BUILD_NUMBER=$(grep '^version:' pubspec.yaml | cut -d '+' -f 2)
           BUILD_TYPE='${{ needs.read-config.outputs.build-type }}'
           
+          # Generate timestamp for unique releases
+          TIMESTAMP=$(date -u '+%Y%m%d-%H%M%S')
+          
           # Replace placeholders in release name and tag
           RELEASE_NAME='${{ steps.release-config.outputs.release-name-template }}'
           RELEASE_NAME=${RELEASE_NAME//\{version\}/$VERSION}
@@ -126,8 +129,13 @@ jobs:
           TAG_NAME=${TAG_NAME//\{buildType\}/$BUILD_TYPE}
           TAG_NAME=${TAG_NAME//\{buildNumber\}/$BUILD_NUMBER}
           
+          # Add timestamp to make releases unique
+          RELEASE_NAME="$RELEASE_NAME - $TIMESTAMP"
+          TAG_NAME="$TAG_NAME-$TIMESTAMP"
+          
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
           echo "release_name=$RELEASE_NAME" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
@@ -170,6 +178,7 @@ jobs:
           Build Type:     $BUILD_TYPE
           Branch:         $BRANCH_NAME
           Build Number:   ${{ steps.version.outputs.build_number }}
+          Timestamp:      ${{ steps.version.outputs.timestamp }}
           Commit SHA:     ${{ github.sha }}
           Build Date:     $(date -u '+%Y-%m-%d %H:%M:%S UTC')
           Flutter:        $(echo '${{ needs.read-config.outputs.config }}' | jq -r '.flutter.version')
