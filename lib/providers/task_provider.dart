@@ -23,36 +23,42 @@ class TaskProvider with ChangeNotifier {
       title: 'Welcome to Task Manager v3.0!',
       description: 'Explore the new features and enhanced UI in this major update. Check out improved performance and better task organization.',
       status: TaskStatus.working,
+      userId: 1,
     ),
     Task(
       id: 1002,
       title: 'Set up your workspace',
       description: 'Customize your task management environment. Organize your projects and set priorities for maximum productivity.',
       status: TaskStatus.pending,
+      userId: 1,
     ),
     Task(
       id: 1003,
       title: 'Plan your weekly goals',
       description: 'Define clear objectives for the week. Break down large projects into manageable tasks and set realistic deadlines.',
       status: TaskStatus.pending,
+      userId: 1,
     ),
     Task(
       id: 1004,
       title: 'Review completed projects',
       description: 'Analyze your recent accomplishments and identify areas for improvement. Celebrate your successes!',
       status: TaskStatus.completed,
+      userId: 1,
     ),
     Task(
       id: 1005,
       title: 'Optimize your workflow',
       description: 'Implement new productivity techniques and tools. Streamline repetitive tasks and focus on high-impact activities.',
       status: TaskStatus.working,
+      userId: 1,
     ),
     Task(
       id: 1006,
       title: 'Learn new skills',
       description: 'Invest time in professional development. Take online courses, read industry articles, or practice new technologies.',
       status: TaskStatus.pending,
+      userId: 1,
     ),
   ];
 
