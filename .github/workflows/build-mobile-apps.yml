@@ -131,11 +131,11 @@ jobs:
           echo "release_name=$RELEASE_NAME" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
-      - name: Download Android artifacts
+      - name: Download Android APK artifacts
         if: needs.build-android.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          pattern: "*_*_${{ needs.read-config.outputs.build-type }}_*.apk"
+          pattern: "android-apks-${{ needs.read-config.outputs.build-type }}-*"
           path: ./artifacts/android/
           merge-multiple: true
 
@@ -162,60 +162,87 @@ jobs:
           BRANCH_NAME='${{ needs.read-config.outputs.branch-name }}'
           
           cat > release_notes.md << EOF
-          # 📱 ${{ steps.version.outputs.release_name }}
+          # ${{ steps.version.outputs.release_name }}
           
-          **Build Type:** $BUILD_TYPE  
-          **Branch:** $BRANCH_NAME  
-          **Build Number:** ${{ steps.version.outputs.build_number }}  
-          **Commit:** ${{ github.sha }}  
-          **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          ## Build Information
           
-          ## 📦 Available Downloads
+          \`\`\`
+          Build Type:     $BUILD_TYPE
+          Branch:         $BRANCH_NAME
+          Build Number:   ${{ steps.version.outputs.build_number }}
+          Commit SHA:     ${{ github.sha }}
+          Build Date:     $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          Flutter:        $(echo '${{ needs.read-config.outputs.config }}' | jq -r '.flutter.version')
+          \`\`\`
+          
+          ## Available Artifacts
           
           EOF
           
           if [ "${{ needs.build-android.result }}" == "success" ]; then
-            echo "### 🤖 Android" >> release_notes.md
-            echo "- **APK**: Direct installation file for Android devices" >> release_notes.md
-            echo "- **AAB**: Android App Bundle for Google Play Store" >> release_notes.md
+            echo "### Android Platform" >> release_notes.md
+            echo "" >> release_notes.md
+            echo "**APK Files (Architecture-Specific)**" >> release_notes.md
+            echo "- Optimized with --shrink and --split-per-abi flags" >> release_notes.md
+            echo "- Reduced size through architecture splitting" >> release_notes.md
+            echo "- Direct installation on Android devices" >> release_notes.md
+            echo "" >> release_notes.md
+            echo "**AAB Bundle**" >> release_notes.md
+            echo "- Android App Bundle for Google Play Store distribution" >> release_notes.md
+            echo "- Dynamic delivery and size optimization" >> release_notes.md
             echo "" >> release_notes.md
           fi
           
           if [ "${{ needs.build-ios.result }}" == "success" ]; then
-            echo "### 🍎 iOS" >> release_notes.md
-            echo "- **IPA**: iOS application archive for distribution" >> release_notes.md
+            echo "### iOS Platform" >> release_notes.md
+            echo "" >> release_notes.md
+            echo "**IPA Archive**" >> release_notes.md
+            echo "- iOS application archive for distribution" >> release_notes.md
+            echo "- Manual IPA creation for unsigned builds" >> release_notes.md
+            echo "- Compatible with development and testing environments" >> release_notes.md
             echo "" >> release_notes.md
           fi
           
-          echo "## 🔧 Build Configuration" >> release_notes.md
-          echo "- **Flutter Version**: $(echo '${{ needs.read-config.outputs.config }}' | jq -r '.flutter.version')" >> release_notes.md
-          echo "- **Build Type**: $BUILD_TYPE" >> release_notes.md
-          echo "- **Branch**: $BRANCH_NAME" >> release_notes.md
-          echo "- **Android Enabled**: ${{ needs.read-config.outputs.build-android }}" >> release_notes.md
-          echo "- **iOS Enabled**: ${{ needs.read-config.outputs.build-ios }}" >> release_notes.md
+          echo "## Build Configuration" >> release_notes.md
           echo "" >> release_notes.md
-          echo "## 📋 Build Status" >> release_notes.md
-          echo "| Platform | Status |" >> release_notes.md
-          echo "|----------|--------|" >> release_notes.md
+          echo "\`\`\`json" >> release_notes.md
+          echo "{" >> release_notes.md
+          echo "  \"flutter_version\": \"$(echo '${{ needs.read-config.outputs.config }}' | jq -r '.flutter.version')\"," >> release_notes.md
+          echo "  \"build_type\": \"$BUILD_TYPE\"," >> release_notes.md
+          echo "  \"branch\": \"$BRANCH_NAME\"," >> release_notes.md
+          echo "  \"android_enabled\": ${{ needs.read-config.outputs.build-android }}," >> release_notes.md
+          echo "  \"ios_enabled\": ${{ needs.read-config.outputs.build-ios }}," >> release_notes.md
+          echo "  \"optimizations\": {" >> release_notes.md
+          echo "    \"shrink\": true," >> release_notes.md
+          echo "    \"split_per_abi\": true," >> release_notes.md
+          echo "    \"obfuscate\": $([ "$BUILD_TYPE" = "release" ] && echo "true" || echo "false")" >> release_notes.md
+          echo "  }" >> release_notes.md
+          echo "}" >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## Platform Status" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "| Platform | Status | Enabled |" >> release_notes.md
+          echo "|----------|--------|---------|" >> release_notes.md
           
           if [ "${{ needs.read-config.outputs.build-android }}" == "true" ]; then
             if [ "${{ needs.build-android.result }}" == "success" ]; then
-              echo "| Android | ✅ Success |" >> release_notes.md
+              echo "| Android | SUCCESS | true |" >> release_notes.md
             else
-              echo "| Android | ❌ Failed |" >> release_notes.md
+              echo "| Android | FAILED | true |" >> release_notes.md
             fi
           else
-            echo "| Android | ⏭️ Skipped |" >> release_notes.md
+            echo "| Android | SKIPPED | false |" >> release_notes.md
           fi
           
           if [ "${{ needs.read-config.outputs.build-ios }}" == "true" ]; then
             if [ "${{ needs.build-ios.result }}" == "success" ]; then
-              echo "| iOS | ✅ Success |" >> release_notes.md
+              echo "| iOS | SUCCESS | true |" >> release_notes.md
             else
-              echo "| iOS | ❌ Failed |" >> release_notes.md
+              echo "| iOS | FAILED | true |" >> release_notes.md
             fi
           else
-            echo "| iOS | ⏭️ Skipped |" >> release_notes.md
+            echo "| iOS | SKIPPED | false |" >> release_notes.md
           fi
 
       - name: Create GitHub Release
