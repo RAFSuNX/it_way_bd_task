@@ -12,6 +12,7 @@ jobs:
     outputs:
       config: ${{ steps.config.outputs.config }}
       build-type: ${{ steps.config.outputs.build-type }}
+      flutter-env: ${{ steps.config.outputs.flutter-env }}
       build-android: ${{ steps.config.outputs.build-android }}
       build-ios: ${{ steps.config.outputs.build-ios }}
       sequential: ${{ steps.config.outputs.sequential }}
@@ -28,7 +29,7 @@ jobs:
             CONFIG=$(cat build-config.json | tr -d '\n' | tr -d '\r')
           else
             echo "build-config.json not found, using default values"
-            CONFIG='{"app":{"name":"TaskManager","extractFromPubspec":true},"android":{"enabled":true,"outputFormat":["apk","aab"]},"ios":{"enabled":true,"codesign":false},"flutter":{"version":"3.35.1","channel":"stable"},"java":{"version":"17","distribution":"zulu"},"xcode":{"version":"latest-stable"},"testing":{"runTests":false,"testTimeout":"10m"},"workflow":{"sequential":true,"artifactRetentionDays":30},"branchMapping":{"default":"debug"}}'
+            CONFIG='{"app":{"name":"TaskManager","extractFromPubspec":true},"android":{"enabled":true,"outputFormat":["apk","aab"]},"ios":{"enabled":true,"codesign":false},"flutter":{"version":"3.35.1","channel":"stable"},"java":{"version":"17","distribution":"zulu"},"xcode":{"version":"latest-stable"},"testing":{"runTests":false,"testTimeout":"10m"},"workflow":{"sequential":true,"artifactRetentionDays":30},"branchMapping":{"default":"debug"},"environment":{"FLUTTER_ENV":"debug","environmentMapping":{"release":"production","beta":"staging","debug":"development"}}}'
           fi
           
           # Get branch name and determine build type
@@ -47,6 +48,17 @@ jobs:
           
           echo "build-type=$BUILD_TYPE" >> $GITHUB_OUTPUT
           
+          # Determine FLUTTER_ENV from config based on build type
+          FLUTTER_ENV=$(echo $CONFIG | jq -r --arg buildType "$BUILD_TYPE" '
+            if .environment.environmentMapping[$buildType] then
+              .environment.environmentMapping[$buildType]
+            else
+              .environment.FLUTTER_ENV // $buildType
+            end
+          ')
+          
+          echo "flutter-env=$FLUTTER_ENV" >> $GITHUB_OUTPUT
+          
           # Extract other configuration values
           BUILD_ANDROID=$(echo $CONFIG | jq -r '.android.enabled')
           BUILD_IOS=$(echo $CONFIG | jq -r '.ios.enabled')
@@ -60,6 +72,7 @@ jobs:
           echo "=== Build Configuration ==="
           echo "Branch: $BRANCH_NAME"
           echo "Build Type: $BUILD_TYPE"
+          echo "Flutter Environment: $FLUTTER_ENV"
           echo "Android build enabled: $BUILD_ANDROID"
           echo "iOS build enabled: $BUILD_IOS"
           echo "Sequential builds: $SEQUENTIAL"
@@ -71,6 +84,7 @@ jobs:
     with:
       config: ${{ needs.read-config.outputs.config }}
       build-type: ${{ needs.read-config.outputs.build-type }}
+      flutter-env: ${{ needs.read-config.outputs.flutter-env }}
       branch-name: ${{ needs.read-config.outputs.branch-name }}
     secrets: inherit
 
@@ -81,6 +95,7 @@ jobs:
     with:
       config: ${{ needs.read-config.outputs.config }}
       build-type: ${{ needs.read-config.outputs.build-type }}
+      flutter-env: ${{ needs.read-config.outputs.flutter-env }}
       branch-name: ${{ needs.read-config.outputs.branch-name }}
     secrets: inherit
 
@@ -170,7 +185,7 @@ jobs:
           BRANCH_NAME='${{ needs.read-config.outputs.branch-name }}'
           
           # Extract short commit hash for better readability
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           
           cat > release_notes.md << EOF
           ## Build Information

@@ -43,6 +43,14 @@
     "staging": "beta",
     "default": "debug"
   },
+  "environment": {
+    "FLUTTER_ENV": "debug",
+    "environmentMapping": {
+      "release": "production",
+      "beta": "staging",
+      "debug": "development"
+    }
+  },
   "releaseConfig": {
     "createRelease": true,
     "releaseName": "Task Management System v{version} ({buildType})",
