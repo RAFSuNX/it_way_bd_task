@@ -1,0 +1,20 @@
+{
+  "android": {
+    "enabled": true,
+    "buildType": "release",
+    "outputFormat": ["apk", "aab"]
+  },
+  "ios": {
+    "enabled": true,
+    "buildType": "release",
+    "codesign": false
+  },
+  "flutter": {
+    "version": "3.24.3",
+    "channel": "stable"
+  },
+  "testing": {
+    "runTests": true,
+    "testTimeout": "10m"
+  }
+}

@@ -1,0 +1,164 @@
+name: Build Mobile Apps
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  read-config:
+    runs-on: ubuntu-latest
+    outputs:
+      build-android: ${{ steps.config.outputs.build-android }}
+      build-ios: ${{ steps.config.outputs.build-ios }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Read build configuration
+        id: config
+        run: |
+          if [ -f "build-config.json" ]; then
+            BUILD_ANDROID=$(jq -r '.android.enabled' build-config.json)
+            BUILD_IOS=$(jq -r '.ios.enabled' build-config.json)
+          else
+            echo "build-config.json not found, using default values"
+            BUILD_ANDROID="true"
+            BUILD_IOS="true"
+          fi
+          echo "build-android=$BUILD_ANDROID" >> $GITHUB_OUTPUT
+          echo "build-ios=$BUILD_IOS" >> $GITHUB_OUTPUT
+          echo "Android build enabled: $BUILD_ANDROID"
+          echo "iOS build enabled: $BUILD_IOS"
+
+  build-android:
+    needs: read-config
+    if: needs.read-config.outputs.build-android == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.3'
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+      - name: Build App Bundle (AAB)
+        run: flutter build appbundle --release
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aab
+          path: build/app/outputs/bundle/release/app-release.aab
+          retention-days: 30
+
+  build-ios:
+    needs: read-config
+    if: needs.read-config.outputs.build-ios == 'true'
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.3'
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Build iOS (No Codesign)
+        run: |
+          flutter build ios --release --no-codesign
+
+      - name: Create IPA (Archive)
+        run: |
+          cd ios
+          xcodebuild -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -destination generic/platform=iOS \
+            -archivePath build/Runner.xcarchive \
+            archive
+
+      - name: Export IPA
+        run: |
+          cd ios
+          xcodebuild -exportArchive \
+            -archivePath build/Runner.xcarchive \
+            -exportPath build/ \
+            -exportOptionsPlist Runner/ExportOptions.plist
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-app
+          path: ios/build/*.ipa
+          retention-days: 30
+
+  notify-completion:
+    needs: [read-config, build-android, build-ios]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build Summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Status | Enabled |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.read-config.outputs.build-android }}" == "true" ]; then
+            if [ "${{ needs.build-android.result }}" == "success" ]; then
+              echo "| Android | ✅ Success | Yes |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| Android | ❌ Failed | Yes |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| Android | ⏭️ Skipped | No |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.read-config.outputs.build-ios }}" == "true" ]; then
+            if [ "${{ needs.build-ios.result }}" == "success" ]; then
+              echo "| iOS | ✅ Success | Yes |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| iOS | ❌ Failed | Yes |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| iOS | ⏭️ Skipped | No |" >> $GITHUB_STEP_SUMMARY
+          fi
