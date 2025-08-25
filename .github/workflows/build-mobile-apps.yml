@@ -169,6 +169,9 @@ jobs:
           BUILD_TYPE='${{ needs.read-config.outputs.build-type }}'
           BRANCH_NAME='${{ needs.read-config.outputs.branch-name }}'
           
+          # Extract short commit hash for better readability
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          
           cat > release_notes.md << EOF
           # ${{ steps.version.outputs.release_name }}
           
@@ -179,7 +182,8 @@ jobs:
           Branch:         $BRANCH_NAME
           Build Number:   ${{ steps.version.outputs.build_number }}
           Timestamp:      ${{ steps.version.outputs.timestamp }}
-          Commit SHA:     ${{ github.sha }}
+          Commit ID:      $SHORT_SHA
+          Full SHA:       ${{ github.sha }}
           Build Date:     $(date -u '+%Y-%m-%d %H:%M:%S UTC')
           Flutter:        $(echo '${{ needs.read-config.outputs.config }}' | jq -r '.flutter.version')
           \`\`\`
