@@ -173,8 +173,6 @@ jobs:
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
           
           cat > release_notes.md << EOF
-          # ${{ steps.version.outputs.release_name }}
-          
           ## Build Information
           
           \`\`\`
