@@ -153,13 +153,16 @@ jobs:
               -exportPath build/ \
               -exportOptionsPlist Runner/ExportOptions.plist
           else
-            # Use debugging export for unsigned builds with automatic signing
+            # Use development export for unsigned builds without team requirement
             xcodebuild -exportArchive \
               -archivePath build/Runner.xcarchive \
               -exportPath build/ \
               -exportOptionsPlist Runner/ExportOptions.plist \
               -allowProvisioningUpdates \
-              -allowProvisioningDeviceRegistration
+              -allowProvisioningDeviceRegistration \
+              CODE_SIGN_IDENTITY="-" \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO
           fi
         env:
           IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}

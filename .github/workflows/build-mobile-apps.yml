@@ -25,19 +25,10 @@ jobs:
         run: |
           # Read configuration file
           if [ -f "build-config.json" ]; then
-            CONFIG=$(cat build-config.json)
+            CONFIG=$(cat build-config.json | tr -d '\n' | tr -d '\r')
           else
             echo "build-config.json not found, using default values"
-            CONFIG='{
-              "android": {"enabled": true, "outputFormat": ["apk", "aab"]},
-              "ios": {"enabled": true, "codesign": false},
-              "flutter": {"version": "3.35.1", "channel": "stable"},
-              "java": {"version": "17", "distribution": "zulu"},
-              "xcode": {"version": "latest-stable"},
-              "testing": {"runTests": false, "testTimeout": "10m"},
-              "workflow": {"sequential": true, "artifactRetentionDays": 30},
-              "branchMapping": {"default": "debug"}
-            }'
+            CONFIG='{"app":{"name":"TaskManager","extractFromPubspec":true},"android":{"enabled":true,"outputFormat":["apk","aab"]},"ios":{"enabled":true,"codesign":false},"flutter":{"version":"3.35.1","channel":"stable"},"java":{"version":"17","distribution":"zulu"},"xcode":{"version":"latest-stable"},"testing":{"runTests":false,"testTimeout":"10m"},"workflow":{"sequential":true,"artifactRetentionDays":30},"branchMapping":{"default":"debug"}}'
           fi
           
           # Get branch name and determine build type
