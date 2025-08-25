@@ -244,11 +244,12 @@ jobs:
               -exportPath build/ \
               -exportOptionsPlist Runner/ExportOptions.plist
           else
-            # Use development export for unsigned builds
+            # Use development export for unsigned builds with manual signing
             xcodebuild -exportArchive \
               -archivePath build/Runner.xcarchive \
               -exportPath build/ \
-              -exportOptionsPlist Runner/ExportOptions.plist
+              -exportOptionsPlist Runner/ExportOptions.plist \
+              -allowProvisioningUpdates
           fi
         env:
           IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
