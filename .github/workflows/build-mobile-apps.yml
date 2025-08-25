@@ -2,7 +2,7 @@ name: Build Mobile Apps
 
 on:
   push:
-    branches: [ main, develop, release/*, beta/*, debug ]
+    branches: [ main, develop, release, release/*, beta/*, debug ]
   pull_request:
     branches: [ main ]
 
