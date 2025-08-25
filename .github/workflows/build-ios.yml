@@ -153,16 +153,28 @@ jobs:
               -exportPath build/ \
               -exportOptionsPlist Runner/ExportOptions.plist
           else
-            # Use development export for unsigned builds without team requirement
-            xcodebuild -exportArchive \
-              -archivePath build/Runner.xcarchive \
-              -exportPath build/ \
-              -exportOptionsPlist Runner/ExportOptions.plist \
-              -allowProvisioningUpdates \
-              -allowProvisioningDeviceRegistration \
-              CODE_SIGN_IDENTITY="-" \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGNING_ALLOWED=NO
+            # Create IPA manually for unsigned builds to avoid team requirement
+            echo "Creating IPA manually from built app..."
+            mkdir -p build/Payload
+            
+            # Find the built app
+            if [ "${{ inputs.build-type }}" == "debug" ]; then
+              APP_PATH="build/Runner.xcarchive/Products/Applications/Runner.app"
+            else
+              APP_PATH="build/Runner.xcarchive/Products/Applications/Runner.app"
+            fi
+            
+            if [ -d "$APP_PATH" ]; then
+              cp -r "$APP_PATH" build/Payload/
+              cd build
+              zip -r Runner.ipa Payload/
+              echo "IPA created successfully at: $(pwd)/Runner.ipa"
+            else
+              echo "App not found at $APP_PATH"
+              echo "Available files in build directory:"
+              find build -name "*.app" -type d
+              exit 1
+            fi
           fi
         env:
           IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
