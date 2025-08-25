@@ -102,9 +102,11 @@ jobs:
         if: contains(steps.config.outputs.output-formats, 'apk')
         run: |
           if [ "${{ inputs.build-type }}" == "debug" ]; then
-            flutter build apk --debug
+            # Build optimized debug APK with size optimizations
+            flutter build apk --debug --shrink --split-per-abi
           else
-            flutter build apk --release
+            # Build release APK with full optimizations
+            flutter build apk --release --shrink --split-per-abi --obfuscate --split-debug-info=build/debug-info
           fi
 
       - name: Build App Bundle (AAB)
@@ -119,40 +121,73 @@ jobs:
       - name: Rename and set build info
         id: build-info
         run: |
-          # Create proper file names
-          APK_NAME="${{ steps.app-info.outputs.app-name }}_${{ steps.app-info.outputs.version }}_${{ inputs.build-type }}_${{ steps.app-info.outputs.build-date }}.apk"
-          AAB_NAME="${{ steps.app-info.outputs.app-name }}_${{ steps.app-info.outputs.version }}_${{ inputs.build-type }}_${{ steps.app-info.outputs.build-date }}.aab"
-          
-          if [ "${{ inputs.build-type }}" == "debug" ]; then
-            ORIGINAL_APK="build/app/outputs/flutter-apk/app-debug.apk"
-            ORIGINAL_AAB="build/app/outputs/bundle/debug/app-debug.aab"
-          else
-            ORIGINAL_APK="build/app/outputs/flutter-apk/app-release.apk"
-            ORIGINAL_AAB="build/app/outputs/bundle/release/app-release.aab"
-          fi
-          
           # Create renamed directory
           mkdir -p build/renamed
           
-          # Rename files if they exist
-          if [ -f "$ORIGINAL_APK" ]; then
-            cp "$ORIGINAL_APK" "build/renamed/$APK_NAME"
-            echo "apk-path=build/renamed/$APK_NAME" >> $GITHUB_OUTPUT
-            echo "apk-name=$APK_NAME" >> $GITHUB_OUTPUT
+          # Handle split APKs (multiple files) or single APK
+          if [ "${{ inputs.build-type }}" == "debug" ]; then
+            APK_DIR="build/app/outputs/flutter-apk"
+            AAB_FILE="build/app/outputs/bundle/debug/app-debug.aab"
+          else
+            APK_DIR="build/app/outputs/flutter-apk"
+            AAB_FILE="build/app/outputs/bundle/release/app-release.aab"
           fi
           
-          if [ -f "$ORIGINAL_AAB" ]; then
-            cp "$ORIGINAL_AAB" "build/renamed/$AAB_NAME"
+          # Find and rename APK files
+          APK_COUNT=0
+          for apk_file in "$APK_DIR"/*.apk; do
+            if [ -f "$apk_file" ]; then
+              APK_COUNT=$((APK_COUNT + 1))
+              filename=$(basename "$apk_file")
+              
+              # Extract architecture from filename (e.g., app-arm64-v8a-debug.apk)
+              if [[ "$filename" == *"arm64-v8a"* ]]; then
+                ARCH="arm64"
+              elif [[ "$filename" == *"armeabi-v7a"* ]]; then
+                ARCH="arm32"
+              elif [[ "$filename" == *"x86_64"* ]]; then
+                ARCH="x64"
+              elif [[ "$filename" == *"x86"* ]]; then
+                ARCH="x86"
+              else
+                ARCH="universal"
+              fi
+              
+              NEW_NAME="${{ steps.app-info.outputs.app-name }}_${{ steps.app-info.outputs.version }}_${{ inputs.build-type }}_${{ steps.app-info.outputs.build-date }}_${ARCH}.apk"
+              cp "$apk_file" "build/renamed/$NEW_NAME"
+              echo "Created: $NEW_NAME ($(du -h "$apk_file" | cut -f1))"
+            fi
+          done
+          
+          # Set output for the main APK (arm64 preferred, or first found)
+          MAIN_APK=$(find build/renamed -name "*arm64*.apk" | head -n 1)
+          if [ -z "$MAIN_APK" ]; then
+            MAIN_APK=$(find build/renamed -name "*.apk" | head -n 1)
+          fi
+          
+          if [ -n "$MAIN_APK" ]; then
+            echo "apk-path=$MAIN_APK" >> $GITHUB_OUTPUT
+            echo "apk-name=$(basename "$MAIN_APK")" >> $GITHUB_OUTPUT
+          fi
+          
+          # Handle AAB
+          if [ -f "$AAB_FILE" ]; then
+            AAB_NAME="${{ steps.app-info.outputs.app-name }}_${{ steps.app-info.outputs.version }}_${{ inputs.build-type }}_${{ steps.app-info.outputs.build-date }}.aab"
+            cp "$AAB_FILE" "build/renamed/$AAB_NAME"
             echo "aab-path=build/renamed/$AAB_NAME" >> $GITHUB_OUTPUT
             echo "aab-name=$AAB_NAME" >> $GITHUB_OUTPUT
           fi
+          
+          echo "=== Build Summary ==="
+          echo "APK files created: $APK_COUNT"
+          ls -lh build/renamed/
 
-      - name: Upload APK artifact
+      - name: Upload APK artifacts
         if: contains(steps.config.outputs.output-formats, 'apk')
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.build-info.outputs.apk-name }}
-          path: ${{ steps.build-info.outputs.apk-path }}
+          name: android-apks-${{ inputs.build-type }}-${{ steps.app-info.outputs.build-date }}
+          path: build/renamed/*.apk
           retention-days: ${{ steps.config.outputs.retention-days }}
 
       - name: Upload AAB artifact
