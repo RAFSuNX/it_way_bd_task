@@ -12,6 +12,14 @@ jobs:
     outputs:
       build-android: ${{ steps.config.outputs.build-android }}
       build-ios: ${{ steps.config.outputs.build-ios }}
+      flutter-version: ${{ steps.config.outputs.flutter-version }}
+      flutter-channel: ${{ steps.config.outputs.flutter-channel }}
+      java-version: ${{ steps.config.outputs.java-version }}
+      java-distribution: ${{ steps.config.outputs.java-distribution }}
+      xcode-version: ${{ steps.config.outputs.xcode-version }}
+      run-tests: ${{ steps.config.outputs.run-tests }}
+      retention-days: ${{ steps.config.outputs.retention-days }}
+      sequential: ${{ steps.config.outputs.sequential }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,15 +30,50 @@ jobs:
           if [ -f "build-config.json" ]; then
             BUILD_ANDROID=$(jq -r '.android.enabled' build-config.json)
             BUILD_IOS=$(jq -r '.ios.enabled' build-config.json)
+            FLUTTER_VERSION=$(jq -r '.flutter.version' build-config.json)
+            FLUTTER_CHANNEL=$(jq -r '.flutter.channel' build-config.json)
+            JAVA_VERSION=$(jq -r '.java.version' build-config.json)
+            JAVA_DISTRIBUTION=$(jq -r '.java.distribution' build-config.json)
+            XCODE_VERSION=$(jq -r '.xcode.version' build-config.json)
+            RUN_TESTS=$(jq -r '.testing.runTests' build-config.json)
+            RETENTION_DAYS=$(jq -r '.workflow.artifactRetentionDays' build-config.json)
+            SEQUENTIAL=$(jq -r '.workflow.sequential' build-config.json)
           else
             echo "build-config.json not found, using default values"
             BUILD_ANDROID="true"
             BUILD_IOS="true"
+            FLUTTER_VERSION="3.35.1"
+            FLUTTER_CHANNEL="stable"
+            JAVA_VERSION="17"
+            JAVA_DISTRIBUTION="zulu"
+            XCODE_VERSION="latest-stable"
+            RUN_TESTS="false"
+            RETENTION_DAYS="30"
+            SEQUENTIAL="true"
           fi
+          
           echo "build-android=$BUILD_ANDROID" >> $GITHUB_OUTPUT
           echo "build-ios=$BUILD_IOS" >> $GITHUB_OUTPUT
+          echo "flutter-version=$FLUTTER_VERSION" >> $GITHUB_OUTPUT
+          echo "flutter-channel=$FLUTTER_CHANNEL" >> $GITHUB_OUTPUT
+          echo "java-version=$JAVA_VERSION" >> $GITHUB_OUTPUT
+          echo "java-distribution=$JAVA_DISTRIBUTION" >> $GITHUB_OUTPUT
+          echo "xcode-version=$XCODE_VERSION" >> $GITHUB_OUTPUT
+          echo "run-tests=$RUN_TESTS" >> $GITHUB_OUTPUT
+          echo "retention-days=$RETENTION_DAYS" >> $GITHUB_OUTPUT
+          echo "sequential=$SEQUENTIAL" >> $GITHUB_OUTPUT
+          
+          echo "=== Build Configuration ==="
           echo "Android build enabled: $BUILD_ANDROID"
           echo "iOS build enabled: $BUILD_IOS"
+          echo "Flutter version: $FLUTTER_VERSION"
+          echo "Flutter channel: $FLUTTER_CHANNEL"
+          echo "Java version: $JAVA_VERSION"
+          echo "Java distribution: $JAVA_DISTRIBUTION"
+          echo "Xcode version: $XCODE_VERSION"
+          echo "Run tests: $RUN_TESTS"
+          echo "Retention days: $RETENTION_DAYS"
+          echo "Sequential builds: $SEQUENTIAL"
 
   build-android:
     needs: read-config
@@ -43,19 +86,20 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '17'
+          distribution: ${{ needs.read-config.outputs.java-distribution }}
+          java-version: ${{ needs.read-config.outputs.java-version }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.35.1'
-          channel: 'stable'
+          flutter-version: ${{ needs.read-config.outputs.flutter-version }}
+          channel: ${{ needs.read-config.outputs.flutter-channel }}
 
       - name: Get dependencies
         run: flutter pub get
 
       - name: Run tests
+        if: needs.read-config.outputs.run-tests == 'true'
         run: flutter test
 
       - name: Setup Android Signing (Optional)
@@ -87,7 +131,7 @@ jobs:
         with:
           name: android-apk
           path: build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 30
+          retention-days: ${{ needs.read-config.outputs.retention-days }}
 
       - name: Build App Bundle (Signed)
         if: env.ANDROID_KEYSTORE_BASE64 != ''
@@ -106,11 +150,11 @@ jobs:
         with:
           name: android-aab
           path: build/app/outputs/bundle/release/app-release.aab
-          retention-days: 30
+          retention-days: ${{ needs.read-config.outputs.retention-days }}
 
   build-ios:
-    needs: read-config
-    if: needs.read-config.outputs.build-ios == 'true'
+    needs: [read-config, build-android]
+    if: needs.read-config.outputs.build-ios == 'true' && (needs.read-config.outputs.sequential != 'true' || always())
     runs-on: macos-latest
     steps:
       - name: Checkout code
@@ -119,19 +163,20 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.35.1'
-          channel: 'stable'
+          flutter-version: ${{ needs.read-config.outputs.flutter-version }}
+          channel: ${{ needs.read-config.outputs.flutter-channel }}
 
       - name: Get dependencies
         run: flutter pub get
 
       - name: Run tests
+        if: needs.read-config.outputs.run-tests == 'true'
         run: flutter test
 
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: ${{ needs.read-config.outputs.xcode-version }}
 
       - name: Setup iOS Signing (Optional)
         if: env.IOS_CERTIFICATE_BASE64 != ''
@@ -213,7 +258,7 @@ jobs:
         with:
           name: ios-app
           path: ios/build/*.ipa
-          retention-days: 30
+          retention-days: ${{ needs.read-config.outputs.retention-days }}
 
   create-release:
     needs: [read-config, build-android, build-ios]

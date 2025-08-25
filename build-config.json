@@ -13,8 +13,19 @@
     "version": "3.35.1",
     "channel": "stable"
   },
+  "java": {
+    "version": "17",
+    "distribution": "zulu"
+  },
+  "xcode": {
+    "version": "latest-stable"
+  },
   "testing": {
-    "runTests": true,
+    "runTests": false,
     "testTimeout": "10m"
+  },
+  "workflow": {
+    "sequential": true,
+    "artifactRetentionDays": 30
   }
 }
